@@ -207,16 +207,15 @@ def next_page():
     except Exception:
         pass
 
-    # Debug: print all button aria-labels to help diagnose
+    # Debug: save page screenshot and dump ALL button aria-labels
+    save_debug_info("debug_pagination")
     try:
         all_buttons = browser.find_elements(By.TAG_NAME, "button")
-        labels = []
+        print("  Pagination debug - ALL button aria-labels:")
         for b in all_buttons:
             al = b.get_attribute("aria-label")
-            if al and ("page" in al.lower() or "next" in al.lower() or "suiv" in al.lower()):
-                labels.append(al)
-        if labels:
-            print("  Pagination debug - relevant button labels found: " + str(labels))
+            if al:
+                print("    - " + repr(al))
     except Exception:
         pass
 
