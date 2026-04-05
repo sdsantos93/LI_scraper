@@ -230,9 +230,13 @@ def extract_description_from_soup(soup):
         "informazioni sull'offerta di lavoro",
     ]
 
+    def normalize_apostrophes(text):
+        # Replace curly/typographic apostrophes with straight ones
+        return text.replace("\u2019", "'").replace("\u2018", "'").replace("\u02BC", "'")
+
     # Find h2 headings and check if they match
     for h2 in soup.find_all("h2"):
-        h2_text = h2.get_text(strip=True).lower()
+        h2_text = normalize_apostrophes(h2.get_text(strip=True).lower())
         if any(heading in h2_text for heading in about_headings):
             # The description container is the grandparent of the h2
             # h2 -> header div -> description section div (contains heading + body)
