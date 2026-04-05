@@ -215,21 +215,61 @@ def get_apply_content_from_dropdown(dd, wait_time=0.6):
 # - parsed_results: list of [title, url, url2, employer, location] lists
 # - wait_time (float): seconds to wait for description to load per job
 # Returns: list of description strings (or None for each job)
-def fetch_descriptions(parsed_results, wait_time=5):
-    descriptions = []
-    debug_saved = False
-    selectors = [
+# Find the job description section by locating the "About the job" heading
+# LinkedIn obfuscates CSS classes with random hashes, so we find the description
+# by its heading text instead. Works across all LinkedIn locales.
+# Returns: description text (str) or None
+def extract_description_from_soup(soup):
+    # Headings that identify the job description section in various languages
+    about_headings = [
+        "about the job",
+        "à propos de l'offre d'emploi",
+        "über den job",
+        "acerca del empleo",
+        "sobre a vaga",
+        "informazioni sull'offerta di lavoro",
+    ]
+
+    # Find h2 headings and check if they match
+    for h2 in soup.find_all("h2"):
+        h2_text = h2.get_text(strip=True).lower()
+        if any(heading in h2_text for heading in about_headings):
+            # The description container is the grandparent of the h2
+            # h2 -> header div -> description section div (contains heading + body)
+            container = h2.parent
+            if container:
+                container = container.parent
+            if container and len(container.get_text(strip=True)) > 50:
+                # Remove the heading text itself from the output
+                desc_text = container.get_text(separator="\n", strip=True)
+                # Strip the heading line from the beginning
+                for heading in about_headings:
+                    if desc_text.lower().startswith(heading):
+                        desc_text = desc_text[len(heading):].strip()
+                        break
+                return desc_text
+
+    # Fallback: try legacy CSS selectors (in case LinkedIn reverts)
+    legacy_selectors = [
         "#job-details",
         ".jobs-description__content",
         ".jobs-description",
         "div.show-more-less-html__markup",
-        "div.description__text--rich",
     ]
-    show_more_selectors = [
-        ".jobs-description__footer-button",
-        "button[aria-label='Show more']",
-        "button[aria-label='Voir plus']",
-    ]
+    for sel in legacy_selectors:
+        el = soup.select_one(sel)
+        if el and len(el.get_text(strip=True)) > 50:
+            return el.get_text(separator="\n", strip=True)
+
+    return None
+
+
+def fetch_descriptions(parsed_results, wait_time=5):
+    descriptions = []
+    debug_saved = False
+
+    # "Show more" / "See more" button selectors + text-based fallback
+    show_more_texts = ["show more", "voir plus", "mehr anzeigen", "ver más"]
 
     print("\nFetching descriptions for " + str(len(parsed_results)) + " jobs...")
 
@@ -240,29 +280,27 @@ def fetch_descriptions(parsed_results, wait_time=5):
 
         try:
             browser.get(url)
-            time.sleep(random.uniform(2.0, 3.5))
+            time.sleep(random.uniform(2.5, 4.0))
 
-            # Try clicking "Show more" button to expand description
-            for sm_sel in show_more_selectors:
-                try:
-                    show_more = browser.find_element(By.CSS_SELECTOR, sm_sel)
-                    browser.execute_script("arguments[0].click();", show_more)
-                    time.sleep(0.5)
-                    break
-                except Exception:
-                    pass
+            # Try clicking "Show more" / "Voir plus" button to expand description
+            try:
+                buttons = browser.find_elements(By.TAG_NAME, "button")
+                for btn in buttons:
+                    btn_text = btn.text.strip().lower()
+                    if any(sm in btn_text for sm in show_more_texts):
+                        browser.execute_script("arguments[0].click();", btn)
+                        time.sleep(0.5)
+                        break
+            except Exception:
+                pass
 
-            # Try each selector to find the description
+            # Poll for the description
             desc = None
             elapsed = 0
             interval = 0.5
             while elapsed < wait_time:
                 page_soup = BeautifulSoup(browser.page_source, "html.parser")
-                for sel in selectors:
-                    el = page_soup.select_one(sel)
-                    if el and len(el.get_text(strip=True)) > 50:
-                        desc = el.get_text(separator="\n", strip=True)
-                        break
+                desc = extract_description_from_soup(page_soup)
                 if desc:
                     break
                 time.sleep(interval)
