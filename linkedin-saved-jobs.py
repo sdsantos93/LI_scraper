@@ -186,13 +186,40 @@ def next_page():
                 By.XPATH, "//button[@aria-label='" + label + "']"
             )
             if btn.is_enabled():
-                btn.click()
+                browser.execute_script("arguments[0].click();", btn)
                 return True
             else:
                 print("No more pages")
                 return False
         except Exception:
             continue
+
+    # Fallback: find any pagination button with a forward arrow icon
+    try:
+        # LinkedIn pagination uses li elements with page numbers + next button
+        # The next button is typically the last button in the pagination list
+        pag_buttons = browser.find_elements(
+            By.XPATH, "//button[contains(@class, 'artdeco-pagination__button--next')]"
+        )
+        if pag_buttons and pag_buttons[0].is_enabled():
+            browser.execute_script("arguments[0].click();", pag_buttons[0])
+            return True
+    except Exception:
+        pass
+
+    # Debug: print all button aria-labels to help diagnose
+    try:
+        all_buttons = browser.find_elements(By.TAG_NAME, "button")
+        labels = []
+        for b in all_buttons:
+            al = b.get_attribute("aria-label")
+            if al and ("page" in al.lower() or "next" in al.lower() or "suiv" in al.lower()):
+                labels.append(al)
+        if labels:
+            print("  Pagination debug - relevant button labels found: " + str(labels))
+    except Exception:
+        pass
+
     print("No more pages (pagination button not found)")
     return False
 
