@@ -1,6 +1,7 @@
 # %%
 # ---- Imports ----
 from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
@@ -19,25 +20,85 @@ from notion_client import Client  # for Notion integration
 
 # %%
 # ---- Functions ----
-# Log into LinkedIn
+
+
+def create_stealth_browser():
+    options = Options()
+    options.add_argument("--disable-blink-features=AutomationControlled")
+    options.add_experimental_option("excludeSwitches", ["enable-automation"])
+    options.add_experimental_option("useAutomationExtension", False)
+    options.add_argument("--disable-notifications")
+    options.add_argument("--disable-popup-blocking")
+    b = webdriver.Chrome(options=options)
+    b.execute_script(
+        "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
+    )
+    return b
+
+
+def human_type(element, text):
+    for char in text:
+        element.send_keys(char)
+        time.sleep(random.uniform(0.05, 0.15))
+
+
+# Log into LinkedIn with stealth settings and login verification
 # Requires LI_USER and LI_PASS env vars
-# Args:
-# - wait_to_verify (bool): Flag to add wait time at end of function (allows time for 2 step verification)
-def login_to_linkedin(wait_to_verify=False):
+def login_to_linkedin():
     browser.get("https://www.linkedin.com/login")
     wait = WebDriverWait(browser, 30)
-    wait.until(EC.element_to_be_clickable((By.ID, "username"))).send_keys(
-        os.environ["LI_USER"]
-    )
-    wait.until(EC.element_to_be_clickable((By.ID, "password"))).send_keys(
-        os.environ["LI_PASS"]
-    )
+
+    username_field = wait.until(EC.element_to_be_clickable((By.ID, "username")))
+    human_type(username_field, os.environ["LI_USER"])
+
+    password_field = wait.until(EC.element_to_be_clickable((By.ID, "password")))
+    human_type(password_field, os.environ["LI_PASS"])
+
     wait.until(
         EC.element_to_be_clickable((By.XPATH, "//button[@type='submit']"))
     ).click()
-    print("Logged in")
-    if wait_to_verify:
-        time.sleep(60)
+    print("Login submitted, waiting for verification...")
+
+    # Wait for either successful login (global-nav) or 2FA prompt (pin field)
+    for _ in range(120):  # up to 120 seconds
+        # Check if login succeeded
+        if browser.find_elements(By.CLASS_NAME, "global-nav"):
+            print("Login verified - global-nav detected")
+            return
+        # Check for 2FA pin input
+        pin_fields = browser.find_elements(By.XPATH, "//input[@name='pin']")
+        if pin_fields:
+            print("\n2FA detected! Please enter your verification code in the browser.")
+            print("Waiting up to 120 seconds for you to complete verification...")
+            # Wait for user to complete 2FA manually
+            try:
+                WebDriverWait(browser, 120).until(
+                    EC.presence_of_element_located((By.CLASS_NAME, "global-nav"))
+                )
+                print("Login verified after 2FA")
+                return
+            except Exception:
+                print("ERROR: 2FA verification timed out")
+                break
+        time.sleep(1)
+
+    # If we get here, login failed — save debug info
+    save_debug_info("login_failed")
+    raise Exception(
+        "Login verification failed. Check debug_login_failed.html and debug_login_failed.png"
+    )
+
+
+def save_debug_info(prefix):
+    html_path = prefix + ".html"
+    png_path = prefix + ".png"
+    with open(html_path, "w", encoding="utf-8") as f:
+        f.write(browser.page_source)
+    try:
+        browser.save_screenshot(png_path)
+    except Exception:
+        pass
+    print("  Debug info saved: " + html_path + ", " + png_path)
 
 
 # Get the appropriate saved job URL
@@ -64,7 +125,11 @@ def collect_results(get_ext_link=True, wait_time=0.65):
     html = browser.page_source
     soup = BeautifulSoup(html, "html.parser")
     results = soup.find_all("div", attrs={"class": "mb1"})
-    assert len(results) > 0, "No results detected! (expected at least 1 saved job)"
+    if len(results) == 0:
+        save_debug_info("debug_no_results")
+        raise Exception(
+            "No results detected! Check debug_no_results.html and debug_no_results.png"
+        )
     print("  Found " + str(len(results)) + " results")
 
     # only get external links if indicated, otherwise return a list of Nones
@@ -278,7 +343,7 @@ saved_job_type = "saved"
 
 # How many pages (max) to check?
 # Keep as -1 if all
-num_pages = -1
+num_pages = 1 #-1
 
 # Whether to retrieve external application links, and how long to wait to retrieve them
 retrieve_ext_links = True
@@ -306,7 +371,7 @@ csv_filename = "saved_jobs.csv"
 
 # Open a Chrome browser to LinkedIn saved jobs, then log in
 # Requires LI_USER and LI_PASS environment variables
-browser = webdriver.Chrome()
+browser = create_stealth_browser()
 login_to_linkedin()
 browser.get(get_saved_jobs_url(saved_job_type))
 
@@ -332,8 +397,8 @@ if saved_job_type.lower() != "saved":
 while next_page_exists and i <= num_pages:
     print("Page " + str(i))
     time.sleep(
-        2
-    )  # Turns out this is critical! Otherwise the page doesn't load properly and results won't populate
+        5
+    )  # Wait for page to fully load before parsing
     results, apply_cont = collect_results(
         get_ext_link=retrieve_ext_links, wait_time=ext_link_wait_time
     )
