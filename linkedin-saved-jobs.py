@@ -179,16 +179,22 @@ def parse_results():
 # Returns: bool
 def next_page():
     time.sleep(1)
-    test = browser.find_element(By.XPATH, "//button[@aria-label='Next']")
-    if test.is_enabled():
+    # Try multiple aria-label values for different locales
+    for label in ["Next", "Suivant", "Weiter", "Siguiente", "Avanti", "Próximo"]:
         try:
-            test.click()
-            return True
+            btn = browser.find_element(
+                By.XPATH, "//button[@aria-label='" + label + "']"
+            )
+            if btn.is_enabled():
+                btn.click()
+                return True
+            else:
+                print("No more pages")
+                return False
         except Exception:
-            return False
-    else:
-        print("No more pages")
-        return False
+            continue
+    print("No more pages (pagination button not found)")
+    return False
 
 
 # Click and return the dropdown component for a saved job
@@ -394,7 +400,7 @@ saved_job_type = "saved"
 
 # How many pages (max) to check?
 # Keep as -1 if all
-num_pages = 1 #-1
+num_pages = -1 #1 #-1
 
 # Whether to retrieve external application links, and how long to wait to retrieve them
 retrieve_ext_links = True
