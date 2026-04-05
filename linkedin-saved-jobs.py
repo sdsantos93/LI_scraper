@@ -136,10 +136,10 @@ def collect_results(get_ext_link=True, wait_time=0.65):
         dds = browser.find_elements(
             By.CLASS_NAME, "entity-result__actions-overflow-menu-dropdown"
         )
-        assert len(dds) > 0, (
-            "Expected to find dropdown elements in browser, but did not!"
-        )
-        apply_cont = [get_apply_content_from_dropdown(dd, wait_time) for dd in dds]
+        if len(dds) > 0:
+            apply_cont = [get_apply_content_from_dropdown(dd, wait_time) for dd in dds]
+        else:
+            apply_cont = [None] * len(results)
     else:
         apply_cont = [None] * len(results)
     return results, apply_cont
@@ -203,16 +203,25 @@ def next_page():
 # - wait_time (float): how long to wait, in seconds, for dropdown menu to appear when getting external apply link (anecdotally should be >= 0.6)
 # Returns: the content of a the dropdown
 def get_apply_content_from_dropdown(dd, wait_time=0.6):
-    # Click it to reveal the dropdown
-    dd.click()
-    time.sleep(wait_time)
-    # Find the apply link/text within the dropdown
-    dd_soup = BeautifulSoup(browser.page_source, "html.parser")
-    dd_result = dd_soup.find("div", attrs={"class": "artdeco-dropdown__content-inner"})
-    assert dd_result is not None, "Expected to find a dropdown, but content not found!"
-    # Click again to hide dropdown in browser
-    dd.click()
-    return dd_result
+    try:
+        # Scroll into view to avoid navbar interception
+        browser.execute_script(
+            "arguments[0].scrollIntoView({block: 'center'});", dd
+        )
+        time.sleep(0.2)
+        # Click it to reveal the dropdown
+        browser.execute_script("arguments[0].click();", dd)
+        time.sleep(wait_time)
+        # Find the apply link/text within the dropdown
+        dd_soup = BeautifulSoup(browser.page_source, "html.parser")
+        dd_result = dd_soup.find(
+            "div", attrs={"class": "artdeco-dropdown__content-inner"}
+        )
+        # Click again to hide dropdown in browser
+        browser.execute_script("arguments[0].click();", dd)
+        return dd_result
+    except Exception:
+        return None
 
 
 # Fetch full job descriptions by navigating to each job's URL
