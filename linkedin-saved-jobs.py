@@ -438,7 +438,9 @@ saved_job_type = "saved"
 num_pages = -1 #1 #-1
 
 # Whether to retrieve external application links, and how long to wait to retrieve them
-retrieve_ext_links = True
+# NOTE: Disabled by default — the dropdown interaction causes navigation issues
+# and rarely produces results (url2 column is usually empty)
+retrieve_ext_links = False
 ext_link_wait_time = 0.65  # seconds
 
 # Whether to retrieve full job descriptions (navigates to each job URL)
