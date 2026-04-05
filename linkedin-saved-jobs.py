@@ -59,33 +59,31 @@ def login_to_linkedin():
     ).click()
     print("Login submitted, waiting for verification...")
 
-    # Wait for either successful login (global-nav) or 2FA prompt (pin field)
+    # Wait for either successful login (redirect to /feed) or 2FA prompt
     for _ in range(120):  # up to 120 seconds
-        # Check if login succeeded
-        if browser.find_elements(By.CLASS_NAME, "global-nav"):
-            print("Login verified - global-nav detected")
+        current_url = browser.current_url
+        # Check if login succeeded — LinkedIn redirects to /feed after login
+        if "/feed" in current_url:
+            print("Login verified - redirected to feed")
             return
         # Check for 2FA pin input
         pin_fields = browser.find_elements(By.XPATH, "//input[@name='pin']")
         if pin_fields:
             print("\n2FA detected! Please enter your verification code in the browser.")
             print("Waiting up to 120 seconds for you to complete verification...")
-            # Wait for user to complete 2FA manually
-            try:
-                WebDriverWait(browser, 120).until(
-                    EC.presence_of_element_located((By.CLASS_NAME, "global-nav"))
-                )
-                print("Login verified after 2FA")
-                return
-            except Exception:
-                print("ERROR: 2FA verification timed out")
-                break
+            for _ in range(120):
+                if "/feed" in browser.current_url:
+                    print("Login verified after 2FA")
+                    return
+                time.sleep(1)
+            print("ERROR: 2FA verification timed out")
+            break
         time.sleep(1)
 
     # If we get here, login failed — save debug info
     save_debug_info("login_failed")
     raise Exception(
-        "Login verification failed. Check debug_login_failed.html and debug_login_failed.png"
+        "Login verification failed. Check login_failed.html and login_failed.png"
     )
 
 
