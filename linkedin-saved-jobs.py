@@ -151,10 +151,11 @@ def parse_results():
     inside_res = []
     any_apply_content = any(saved_ext)
 
-    for res, apply_cont, desc in zip(saved, saved_ext, saved_desc):
+    for res, apply_cont in zip(saved, saved_ext):
         # job title
         job = res.find("div", attrs={"class": "t-roman"})
-        title = job.get_text().replace(", Verified", "").strip()
+        title = job.get_text().replace(", Verified", "").replace(", Vérifié", "").strip()
+        title = re.sub(r"\s+", " ", title)  # collapse extra whitespace/newlines
         link = job.find("a").get("href")
         li_link = re.split(r"[\\?]", link)[0]
         # company, location
@@ -170,7 +171,7 @@ def parse_results():
 
             if dd_apply.get_text().strip() == "Apply":
                 ext_link = dd_apply.get("href")
-        inside_res.append([title, li_link, ext_link, employer, location, desc])
+        inside_res.append([title, li_link, ext_link, employer, location])
     return inside_res
 
 
@@ -208,79 +209,89 @@ def get_apply_content_from_dropdown(dd, wait_time=0.6):
     return dd_result
 
 
-# Extract full job description from the detail panel
-# Tries multiple CSS selectors since LinkedIn changes class names frequently
+# Fetch full job descriptions by navigating to each job's URL
+# Called after parse_results() so we have the URLs
 # Args:
-# - timeout (float): max seconds to wait for description to load
-# Returns: description text (str) or None
-def extract_description(timeout=3):
+# - parsed_results: list of [title, url, url2, employer, location] lists
+# - wait_time (float): seconds to wait for description to load per job
+# Returns: list of description strings (or None for each job)
+def fetch_descriptions(parsed_results, wait_time=5):
+    descriptions = []
+    debug_saved = False
     selectors = [
+        "#job-details",
         ".jobs-description__content",
         ".jobs-description",
-        ".jobs-box__html-content",
-        "#job-details",
-        ".job-details-module__content",
+        "div.show-more-less-html__markup",
         "div.description__text--rich",
     ]
-    elapsed = 0
-    interval = 0.3
-    while elapsed < timeout:
-        page_soup = BeautifulSoup(browser.page_source, "html.parser")
-        for sel in selectors:
-            el = page_soup.select_one(sel)
-            if el and el.get_text(strip=True):
-                return el.get_text(separator="\n", strip=True)
-        time.sleep(interval)
-        elapsed += interval
-    return None
+    show_more_selectors = [
+        ".jobs-description__footer-button",
+        "button[aria-label='Show more']",
+        "button[aria-label='Voir plus']",
+    ]
 
+    print("\nFetching descriptions for " + str(len(parsed_results)) + " jobs...")
 
-# Collect job descriptions by clicking each job card on the current page
-# The saved jobs page has a split-pane layout: clicking a card loads details on the right
-# Args:
-# - wait_time (float): seconds to wait for description panel per job
-# Returns: list of description strings (or None/[EXPIRED] for each job)
-def collect_descriptions(wait_time=3):
-    descriptions = []
-    # Find all clickable job card links on the page
-    cards = browser.find_elements(By.CSS_SELECTOR, "div.mb1 a")
-    if not cards:
-        cards = browser.find_elements(
-            By.CSS_SELECTOR, "div.entity-result__item a.app-aware-link"
-        )
-    print("  Extracting descriptions for " + str(len(cards)) + " jobs...")
+    for idx, job in enumerate(parsed_results):
+        title = job[0]
+        url = job[1]
+        print("  Job " + str(idx + 1) + "/" + str(len(parsed_results)) + ": " + title[:50])
 
-    for idx, card in enumerate(cards):
         try:
-            browser.execute_script(
-                "arguments[0].scrollIntoView({block: 'center'});", card
-            )
-            time.sleep(0.3)
-            card.click()
-            time.sleep(random.uniform(1.0, 2.5))
+            browser.get(url)
+            time.sleep(random.uniform(2.0, 3.5))
 
-            desc = extract_description(timeout=wait_time)
+            # Try clicking "Show more" button to expand description
+            for sm_sel in show_more_selectors:
+                try:
+                    show_more = browser.find_element(By.CSS_SELECTOR, sm_sel)
+                    browser.execute_script("arguments[0].click();", show_more)
+                    time.sleep(0.5)
+                    break
+                except Exception:
+                    pass
 
-            # Check for expired/removed jobs
-            if desc and any(
-                phrase in desc.lower()
-                for phrase in [
+            # Try each selector to find the description
+            desc = None
+            elapsed = 0
+            interval = 0.5
+            while elapsed < wait_time:
+                page_soup = BeautifulSoup(browser.page_source, "html.parser")
+                for sel in selectors:
+                    el = page_soup.select_one(sel)
+                    if el and len(el.get_text(strip=True)) > 50:
+                        desc = el.get_text(separator="\n", strip=True)
+                        break
+                if desc:
+                    break
+                time.sleep(interval)
+                elapsed += interval
+
+            if desc:
+                # Check for expired/removed jobs
+                expired_phrases = [
                     "no longer accepting applications",
                     "no longer available",
                     "this job has expired",
+                    "n'accepte plus de candidatures",
+                    "n'est plus disponible",
                 ]
-            ):
-                desc = "[EXPIRED]"
+                if any(phrase in desc.lower() for phrase in expired_phrases):
+                    desc = "[EXPIRED]"
+                    print("    -> expired")
+                else:
+                    print("    -> captured (" + str(len(desc)) + " chars)")
+            else:
+                print("    -> no description found")
+                if not debug_saved:
+                    save_debug_info("debug_job_desc")
+                    debug_saved = True
 
             descriptions.append(desc)
-            if desc and desc != "[EXPIRED]":
-                print("    Job " + str(idx + 1) + ": description captured")
-            elif desc == "[EXPIRED]":
-                print("    Job " + str(idx + 1) + ": expired")
-            else:
-                print("    Job " + str(idx + 1) + ": no description found")
+
         except Exception as e:
-            print("    Job " + str(idx + 1) + ": error - " + str(e))
+            print("    -> error: " + str(e))
             descriptions.append(None)
 
     return descriptions
@@ -347,9 +358,9 @@ num_pages = 1 #-1
 retrieve_ext_links = True
 ext_link_wait_time = 0.65  # seconds
 
-# Whether to retrieve full job descriptions (by clicking each card)
+# Whether to retrieve full job descriptions (navigates to each job URL)
 retrieve_descriptions = True
-desc_wait_time = 3  # seconds to wait for description panel per job
+desc_wait_time = 5  # seconds to wait for description to load per job
 
 # Export type
 # One of: 'csv', 'notion' (case insensitive)
@@ -379,7 +390,6 @@ browser.get(get_saved_jobs_url(saved_job_type))
 # Initiate the list of saved jobs and page counter
 saved = []
 saved_ext = []
-saved_desc = []
 next_page_exists = True
 num_pages = num_pages if num_pages > 0 else math.inf
 i = 1
@@ -403,29 +413,34 @@ while next_page_exists and i <= num_pages:
     assert len(results) > 0, "No saved jobs detected! (expected at least 1)"
     saved.extend(results)
     saved_ext.extend(apply_cont)
-    if retrieve_descriptions:
-        page_descriptions = collect_descriptions(wait_time=desc_wait_time)
-        saved_desc.extend(page_descriptions)
-    else:
-        saved_desc.extend([None] * len(results))
     try:
         next_page_exists = next_page()
     except Exception:
         break
     i += 1
 
-# Close browser
-browser.close()
-
 assert len(saved) > 0, "No results saved, expected more than one saved job!"
 print("\nTotal collected jobs: " + str(len(saved)))
 
-# Parse results
+# Parse results (title, url, url2, employer, location)
 parsed_results = parse_results()
 print("\nParsed results: " + str(len(parsed_results)))
 assert len(parsed_results) == len(saved), (
     "Number of parsed results not equal to number saved!"
 )
+
+# Fetch descriptions by navigating to each job URL (browser still open)
+if retrieve_descriptions:
+    descriptions = fetch_descriptions(parsed_results, wait_time=desc_wait_time)
+    # Add description to each result
+    for i, desc in enumerate(descriptions):
+        parsed_results[i].append(desc)
+else:
+    for job in parsed_results:
+        job.append(None)
+
+# Close browser
+browser.close()
 
 # Export
 assert export_to.lower() in ["csv", "notion"], "export type not recognized!"
@@ -447,7 +462,7 @@ elif export_to.lower() == "notion":
     exist_count = 0
     print("\nChecking for entries in Notion database\n")
     for job in parsed_results:
-        title, url, url2, employer, location, description = job
+        title, url, url2, employer, location, _description = job
         print(title + " at " + employer)
 
         if entry_exists(title, employer):
